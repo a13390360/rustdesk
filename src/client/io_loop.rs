@@ -28,7 +28,7 @@ use hbb_common::{
         DigestCheckResult, RemoveJobMeta,
     },
     get_time, log,
-    message_proto::{permission_info::Permission, *},
+    message_proto::{option_message::BoolOption, permission_info::Permission, *},
     protobuf::Message as _,
     rendezvous_proto::ConnType,
     timeout,
@@ -1413,6 +1413,17 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
 
                         self.is_connected = true;
+    // --- 新增：连接成功后自动阻止被控端输入 ---
+    if self.handler.is_default() { // 仅远程桌面连接（非文件传输、终端等）
+        let mut misc = Misc::new();
+        let mut option = OptionMessage::new();
+        option.block_input = BoolOption::Yes.into();
+        misc.set_option(option);
+        let mut msg = Message::new();
+        msg.set_misc(misc);
+        self.sender.send(Data::Message(msg)).ok();
+    }
+
                     }
                     _ => {}
                 },

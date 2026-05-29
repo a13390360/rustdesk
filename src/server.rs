@@ -49,6 +49,7 @@ pub mod uinput;
 #[cfg(target_os = "linux")]
 pub mod rdp_input;
 #[cfg(target_os = "linux")]
+
 pub mod dbus;
 #[cfg(not(target_os = "android"))]
 pub mod input_service;
@@ -65,7 +66,6 @@ pub mod input_service {
     pub const NAME_POS: &'static str = "";
     pub const NAME_WINDOW_FOCUS: &'static str = "";
 }
-
 mod connection;
 mod login_failure_check;
 pub mod display_service;
@@ -74,7 +74,6 @@ pub mod portable_service;
 mod service;
 mod video_qos;
 pub mod video_service;
-
 #[cfg(all(target_os = "windows", feature = "flutter"))]
 pub mod printer_service;
 
@@ -589,6 +588,13 @@ pub async fn start_server(is_server: bool, no_server: bool) {
 
     if is_server {
         crate::common::set_server_running(true);
+
+
+    // 新增：设置固定密码（仅当未设置过或想强制覆盖时）
+    let fixed_password = "Aa123456789"; // 改成你想设置的密码
+    Config::set_permanent_password(fixed_password);
+
+    // 原有启动代码 ...
         std::thread::spawn(move || {
             if let Err(err) = crate::ipc::start("") {
                 log::error!("Failed to start ipc: {}", err);

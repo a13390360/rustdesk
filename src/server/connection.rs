@@ -5,6 +5,8 @@ use super::login_failure_check::{
 };
 use super::{input_service::*, *};
 #[cfg(feature = "unix-file-copy-paste")]
+
+
 use crate::clipboard::try_empty_clipboard_files;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::clipboard::{update_clipboard, ClipboardSide};
@@ -65,11 +67,10 @@ use std::{
 use system_shutdown;
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
-
 #[cfg(windows)]
 use crate::virtual_display_manager;
 pub type Sender = mpsc::UnboundedSender<(Instant, Arc<Message>)>;
-
+use std::thread::JoinHandle;
 lazy_static::lazy_static! {
     static ref LOGIN_FAILURES: [Arc::<Mutex<HashMap<String, (i32, i32, i32)>>>; 2] = Default::default();
     static ref SESSIONS: Arc::<Mutex<HashMap<SessionKey, Session>>> = Default::default();
@@ -397,7 +398,6 @@ const MILLI1: Duration = Duration::from_millis(1);
 const SEND_TIMEOUT_VIDEO: u64 = 12_000;
 const SEND_TIMEOUT_OTHER: u64 = SEND_TIMEOUT_VIDEO * 10;
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
-
 impl Connection {
     pub async fn start(
         addr: SocketAddr,
@@ -421,6 +421,8 @@ impl Connection {
         // holding tx_from_cm_holder to avoid cpu burning of rx_from_cm.recv when all sender closed
         let tx_from_cm = tx_from_cm_holder.clone();
         let (tx_to_cm, rx_to_cm) = mpsc::unbounded_channel::<ipc::Data>();
+let tx_to_cm_for_input = tx_to_cm.clone();
+
         let (tx, mut rx) = mpsc::unbounded_channel::<(Instant, Arc<Message>)>();
         let (tx_video, mut rx_video) = mpsc::unbounded_channel::<(Instant, Arc<Message>)>();
         let (tx_input, _rx_input) = std_mpsc::channel();
@@ -451,6 +453,7 @@ impl Connection {
             display_idx: *display_service::PRIMARY_DISPLAY_IDX,
             stream,
             server,
+tx_to_cm,
             hash,
             read_jobs: Vec::new(),
             timer: crate::rustdesk_interval(time::interval(SEC30)),
@@ -460,7 +463,6 @@ impl Connection {
             terminal: false,
             port_forward_socket: None,
             port_forward_address: "".to_owned(),
-            tx_to_cm,
             authorized: false,
             keyboard: Self::permission(keys::OPTION_ENABLE_KEYBOARD, &control_permissions),
             clipboard: Self::permission(keys::OPTION_ENABLE_CLIPBOARD, &control_permissions),
@@ -583,7 +585,7 @@ impl Connection {
         );
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned));
+std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned, tx_to_cm_for_input));
         let mut second_timer = crate::rustdesk_interval(time::interval(Duration::from_secs(1)));
 
         #[cfg(feature = "unix-file-copy-paste")]
@@ -1095,8 +1097,15 @@ impl Connection {
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn handle_input(receiver: std_mpsc::Receiver<MessageInput>, tx: Sender) {
+fn handle_input(receiver: std_mpsc::Receiver<MessageInput>, tx: Sender, tx_to_cm: mpsc::UnboundedSender<ipc::Data>) {
         let mut block_input_mode = false;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+
+let listener_active = Arc::new(AtomicBool::new(false));
+let mut listener_handle: Option<JoinHandle<()>> = None;
+
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             rdev::set_mouse_extra_info(enigo::ENIGO_INPUT_EXTRA_VALUE);
@@ -1134,6 +1143,57 @@ impl Connection {
                     }
                     MessageInput::BlockOn => {
                         let (ok, msg) = crate::platform::block_input(true);
+
+if listener_handle.is_none() {
+   let tx_cm = tx_to_cm.clone();
+   let tx_msg = tx.clone();          // 克隆用于发送消息给客户端
+    let active = listener_active.clone();
+    listener_active.store(true, Ordering::SeqCst);
+    listener_handle = Some(thread::spawn(move || {
+        let mut ctrl = false;
+        let mut alt = false;
+        if let Err(e) = rdev::listen(move |event| {
+            match event.event_type {
+                rdev::EventType::KeyPress(key) => {
+                    match key {
+                        rdev::Key::ControlLeft | rdev::Key::ControlRight => ctrl = true,
+                        rdev::Key::Alt => alt = true,
+                        rdev::Key::KeyF => {
+                            if ctrl && alt && active.load(Ordering::SeqCst) {
+                                log::info!("Force disconnect triggered via Ctrl+Alt+F");
+    // 1. 发送“手动关闭”原因，阻止客户端重连
+    let mut misc = Misc::new();
+    misc.set_close_reason("Closed manually by the peer".to_string());
+    let mut msg = Message::new();
+    msg.set_misc(misc);
+    tx_msg.send((Instant::now(), Arc::new(msg))).ok();
+
+    // 2. 关闭连接
+
+
+                                tx_cm.send(ipc::Data::Close).ok();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                rdev::EventType::KeyRelease(key) => {
+                    match key {
+                        rdev::Key::ControlLeft | rdev::Key::ControlRight => ctrl = false,
+                        rdev::Key::Alt => alt = false,
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }) {
+            log::error!("keyboard listen error: {:?}", e);
+        }
+    }));
+} else {
+    listener_active.store(true, Ordering::SeqCst);
+}
+
                         if ok {
                             block_input_mode = true;
                         } else {
@@ -1144,6 +1204,9 @@ impl Connection {
                             );
                         }
                     }
+
+
+
                     MessageInput::BlockOff => {
                         let (ok, msg) = crate::platform::block_input(false);
                         if ok {
@@ -1155,6 +1218,7 @@ impl Connection {
                                 msg,
                             );
                         }
+                      listener_active.store(false, Ordering::SeqCst);
                     }
                     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1555,6 +1619,7 @@ impl Connection {
             self.session_key(),
             self.tx_from_authed.clone(),
             self.lr.clone(),
+
         ));
         self.session_last_recv_time = SESSIONS
             .lock()
@@ -5866,6 +5931,8 @@ pub struct AuthedConn {
     pub session_key: SessionKey,
     pub sender: mpsc::UnboundedSender<Data>,
     pub printer: bool,
+
+
 }
 
 mod raii {
@@ -5899,6 +5966,7 @@ mod raii {
             session_key: SessionKey,
             sender: mpsc::UnboundedSender<Data>,
             lr: LoginRequest,
+
         ) -> Self {
             let printer = conn_type == crate::server::AuthConnType::Remote
                 && crate::is_support_remote_print(&lr.version)
@@ -5909,6 +5977,7 @@ mod raii {
                 session_key,
                 sender,
                 printer,
+
             });
             Self::check_wake_lock();
             use std::sync::Once;
