@@ -1332,7 +1332,26 @@ impl<T: InvokeUiSession> Remote<T> {
                             return false;
                         }
                     }
-                    Some(login_response::Union::PeerInfo(pi)) => {
+                    Some(login_response::Union::PeerInfo(mut pi)) => {
+    // --- 新增代码开始 ---
+if hbb_common::is_ip_str(&self.handler.get_id()) {
+    if let Ok(map) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&pi.platform_additions) {
+        if let Some(id) = map.get("peer_id").and_then(|v| v.as_str()) {
+            // ======== 根据需求选择以下一种 ========
+
+            // 方案1：窗口标题只显示 ID（推荐，简洁）
+            pi.hostname = id.to_string();
+            pi.username = "".to_string();
+
+            // 方案2：窗口标题显示 "ID@原IP:端口"
+            // let original_host = pi.hostname.clone();
+            // pi.hostname = id.to_string();
+            // pi.username = original_host;
+        }
+    }
+}
+    // --- 新增代码结束 ---
+
                         let peer_version = pi.version.clone();
                         let peer_platform = pi.platform.clone();
                         self.set_peer_info(&pi);

@@ -1714,6 +1714,8 @@ if listener_handle.is_none() {
         }
 
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+// 新增：始终携带本机 ID
+platform_additions.insert("peer_id".into(), json!(Config::get_id()));
         if !platform_additions.is_empty() {
             pi.platform_additions = serde_json::to_string(&platform_additions).unwrap_or("".into());
         }

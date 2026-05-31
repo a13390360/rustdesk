@@ -3262,21 +3262,13 @@ Widget buildErrorBanner(BuildContext context,
 }
 
 String getDesktopTabLabel(String peerId, String alias) {
-  String label = alias.isEmpty ? peerId : alias;
   try {
     String peer = bind.mainGetPeerSync(id: peerId);
     Map<String, dynamic> config = jsonDecode(peer);
-    if (config['info']['hostname'] is String) {
-      String hostname = config['info']['hostname'];
-      if (hostname.isNotEmpty &&
-          !label.toLowerCase().contains(hostname.toLowerCase())) {
-        label += "@$hostname";
-      }
-    }
-  } catch (e) {
-    debugPrint("Failed to get hostname:$e");
-  }
-  return label;
+    String hostname = config['info']['hostname'] as String? ?? '';
+    if (hostname.isNotEmpty) return hostname;
+  } catch (e) {}
+  return peerId;
 }
 
 sessionRefreshVideo(SessionID sessionId, PeerInfo pi) async {
