@@ -1334,7 +1334,6 @@ impl<T: InvokeUiSession> Remote<T> {
                     }
                     Some(login_response::Union::PeerInfo(mut pi)) => {
     // --- 新增代码开始 ---
-if hbb_common::is_ip_str(&self.handler.get_id()) {
     if let Ok(map) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&pi.platform_additions) {
         if let Some(id) = map.get("peer_id").and_then(|v| v.as_str()) {
             // ======== 根据需求选择以下一种 ========
@@ -1349,7 +1348,7 @@ if hbb_common::is_ip_str(&self.handler.get_id()) {
             // pi.username = original_host;
         }
     }
-}
+
     // --- 新增代码结束 ---
 
                         let peer_version = pi.version.clone();
