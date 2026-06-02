@@ -3,6 +3,7 @@ use super::login_failure_check::try_acquire_os_credential_login_gate;
 use super::login_failure_check::{
     evaluate_os_credential_policy, record_os_credential_failure, FailureScope,
 };
+use parity_tokio_ipc::Incoming;
 use super::{input_service::*, *};
 #[cfg(feature = "unix-file-copy-paste")]
 
@@ -355,8 +356,7 @@ pub struct Connection {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     terminal_user_token: Option<TerminalUserToken>,
     terminal_generic_service: Option<Box<GenericService>>,
-    // 新增：用于标记远程连接存在的管道监听
-    _remote_flag_incoming: Option<Incoming>,
+    _remote_flag_incoming: Option<Incoming>,   // 新增，用于远程连接标记管道
 }
 
 impl ConnInner {
@@ -450,8 +450,6 @@ let tx_to_cm_for_input = tx_to_cm.clone();
                 id,
                 tx: Some(tx),
                 tx_video: Some(tx_video),
-    terminal_generic_service: None,
-    _remote_flag_incoming: None,
             },
             require_2fa: crate::auth_2fa::get_2fa(None),
             display_idx: *display_service::PRIMARY_DISPLAY_IDX,
@@ -538,6 +536,7 @@ tx_to_cm,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             terminal_user_token: None,
             terminal_generic_service: None,
+_remote_flag_incoming: None, 
         };
         let addr = hbb_common::try_into_v4(addr);
         if !conn.on_open(addr).await {
