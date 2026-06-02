@@ -355,6 +355,8 @@ pub struct Connection {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     terminal_user_token: Option<TerminalUserToken>,
     terminal_generic_service: Option<Box<GenericService>>,
+    // 新增：用于标记远程连接存在的管道监听
+    _remote_flag_incoming: Option<Incoming>,
 }
 
 impl ConnInner {
@@ -448,6 +450,8 @@ let tx_to_cm_for_input = tx_to_cm.clone();
                 id,
                 tx: Some(tx),
                 tx_video: Some(tx_video),
+    terminal_generic_service: None,
+    _remote_flag_incoming: None,
             },
             require_2fa: crate::auth_2fa::get_2fa(None),
             display_idx: *display_service::PRIMARY_DISPLAY_IDX,
@@ -1602,6 +1606,12 @@ if listener_handle.is_none() {
             return false;
         }
         self.authorized = true;
+if self.is_remote() {
+    match crate::ipc::new_listener("_remote_flag").await {
+        Ok(incoming) => self._remote_flag_incoming = Some(incoming),
+        Err(e) => log::error!("Failed to create remote flag pipe: {}", e),
+    }
+}
         let (conn_type, auth_conn_type) = if self.file_transfer.is_some() {
             (1, AuthConnType::FileTransfer)
         } else if self.port_forward_socket.is_some() {
@@ -2731,6 +2741,7 @@ platform_additions.insert("peer_id".into(), json!(Config::get_id()));
                             if !self.send_logon_response_and_keep_alive().await {
                                 return false;
                             }
+
                             self.try_start_cm(
                                 lr.my_id.clone(),
                                 lr.my_name.clone(),
@@ -4672,10 +4683,12 @@ platform_additions.insert("peer_id".into(), json!(Config::get_id()));
     }
 
     async fn on_close(&mut self, reason: &str, lock: bool) {
+
         if self.closed {
             return;
         }
         self.closed = true;
+self._remote_flag_incoming = None;
         // If voice A,B -> C, and A,B has voice call
         // B disconnects, C will reset the voice call input.
         //
