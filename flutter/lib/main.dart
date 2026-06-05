@@ -30,9 +30,8 @@ import 'mobile/pages/server_page.dart';
 import 'models/platform_model.dart';
 
 import 'package:flutter_hbb/plugin/handlers.dart'
-bool _apiServerStarted = false;
     if (dart.library.html) 'package:flutter_hbb/web/plugin/handlers.dart';
-
+bool _apiServerStarted = false;
 /// Basic window and launch properties.
 int? kWindowId;
 WindowType? kWindowType;
@@ -597,38 +596,37 @@ Widget keyListenerBuilder(BuildContext context, Widget? child) {
 }
 /// 启动本地 HTTP API 服务，仅供外部程序调用
 Future<void> startExternalApiServer() async {
+  if (!isDesktop || desktopType != DesktopType.main) return;
   if (_apiServerStarted) return;
   _apiServerStarted = true;
 
   final port = await _getRandomPort();
   final token = _generateToken(32);
 
-  // 保存配置，注意 API 名称可能需要调整
-  await bind.setLocalOption(key: 'api_port', value: port.toString());
-  await bind.setLocalOption(key: 'api_token', value: token);
+  // 使用正确的配置存储 API
+  await bind.mainSetLocalOption(key: 'api_port', value: port.toString());
+  await bind.mainSetLocalOption(key: 'api_token', value: token);
+final configFile = File('${await bind.mainGetAppDir()}/api_config.json');
+await configFile.writeAsString(jsonEncode({'port': port, 'token': token}));
 
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
   debugPrint('External API server listening on 127.0.0.1:$port, token=$token');
 
   server.listen((HttpRequest request) {
-    // 只允许本地连接
     if (request.connectionInfo!.remoteAddress.address != '127.0.0.1') {
       request.response.statusCode = 403;
       request.response.close();
       return;
     }
-
     if (request.method != 'POST') {
       request.response.statusCode = 405;
       request.response.close();
       return;
     }
 
-    // 读取请求体
     request.cast<List<int>>().transform(utf8.decoder).join().then((body) async {
       try {
         final data = jsonDecode(body) as Map<String, dynamic>;
-        // 验证 token
         if (data['token'] != token) {
           request.response.statusCode = 401;
           request.response.write('Unauthorized');
@@ -641,14 +639,11 @@ Future<void> startExternalApiServer() async {
           final remoteId = data['remote_id'] as String;
           final password = data['password'] as String?;
           final forceRelay = data['force_relay'] as bool?;
-
-          // 调用窗口管理器创建远程桌面
           final result = await rustDeskWinManager.newRemoteDesktop(
             remoteId,
             password: password,
             forceRelay: forceRelay,
           );
-
           request.response.statusCode = 200;
           request.response.write(jsonEncode({
             'status': 'ok',
@@ -664,7 +659,6 @@ Future<void> startExternalApiServer() async {
             password: password,
             connToken: connToken,
           );
-
           request.response.statusCode = 200;
           request.response.write(jsonEncode({
             'status': 'ok',
@@ -684,9 +678,9 @@ Future<void> startExternalApiServer() async {
 }
 
 Future<int> _getRandomPort() async {
-  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-  final port = server.port;
-  await server.close();
+  final s = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  final port = s.port;
+  await s.close();
   return port;
 }
 
