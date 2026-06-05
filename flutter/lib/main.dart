@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
+import 'dart:math';
 import 'package:bot_toast/bot_toast.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
@@ -30,6 +30,7 @@ import 'mobile/pages/server_page.dart';
 import 'models/platform_model.dart';
 
 import 'package:flutter_hbb/plugin/handlers.dart'
+bool _apiServerStarted = false;
     if (dart.library.html) 'package:flutter_hbb/web/plugin/handlers.dart';
 
 /// Basic window and launch properties.
@@ -174,6 +175,8 @@ void runMainApp(bool startService) async {
     windowManager.setTitle(getWindowName());
     // Do not use `windowManager.setResizable()` here.
     setResizable(!bind.isIncomingOnly());
+  // 在这里启动，保证主窗口已注册
+  startExternalApiServer();
   });
 }
 
@@ -591,4 +594,104 @@ Widget keyListenerBuilder(BuildContext context, Widget? child) {
       }
     },
   );
+}
+/// 启动本地 HTTP API 服务，仅供外部程序调用
+Future<void> startExternalApiServer() async {
+  if (_apiServerStarted) return;
+  _apiServerStarted = true;
+
+  final port = await _getRandomPort();
+  final token = _generateToken(32);
+
+  // 保存配置，注意 API 名称可能需要调整
+  await bind.setLocalOption(key: 'api_port', value: port.toString());
+  await bind.setLocalOption(key: 'api_token', value: token);
+
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+  debugPrint('External API server listening on 127.0.0.1:$port, token=$token');
+
+  server.listen((HttpRequest request) {
+    // 只允许本地连接
+    if (request.connectionInfo!.remoteAddress.address != '127.0.0.1') {
+      request.response.statusCode = 403;
+      request.response.close();
+      return;
+    }
+
+    if (request.method != 'POST') {
+      request.response.statusCode = 405;
+      request.response.close();
+      return;
+    }
+
+    // 读取请求体
+    request.cast<List<int>>().transform(utf8.decoder).join().then((body) async {
+      try {
+        final data = jsonDecode(body) as Map<String, dynamic>;
+        // 验证 token
+        if (data['token'] != token) {
+          request.response.statusCode = 401;
+          request.response.write('Unauthorized');
+          request.response.close();
+          return;
+        }
+
+        final action = data['action'] as String?;
+        if (action == 'new_remote_desktop') {
+          final remoteId = data['remote_id'] as String;
+          final password = data['password'] as String?;
+          final forceRelay = data['force_relay'] as bool?;
+
+          // 调用窗口管理器创建远程桌面
+          final result = await rustDeskWinManager.newRemoteDesktop(
+            remoteId,
+            password: password,
+            forceRelay: forceRelay,
+          );
+
+          request.response.statusCode = 200;
+          request.response.write(jsonEncode({
+            'status': 'ok',
+            'window_id': result.windowId,
+          }));
+        } else if (action == 'new_file_transfer') {
+          final remoteId = data['remote_id'] as String;
+          final password = data['password'] as String?;
+          final connToken = data['conn_token'] as String?;
+
+          final result = await rustDeskWinManager.newFileTransfer(
+            remoteId,
+            password: password,
+            connToken: connToken,
+          );
+
+          request.response.statusCode = 200;
+          request.response.write(jsonEncode({
+            'status': 'ok',
+            'window_id': result.windowId,
+          }));
+        } else {
+          request.response.statusCode = 400;
+          request.response.write('{"error":"unknown action"}');
+        }
+      } catch (e) {
+        request.response.statusCode = 500;
+        request.response.write(jsonEncode({'error': e.toString()}));
+      }
+      request.response.close();
+    });
+  });
+}
+
+Future<int> _getRandomPort() async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  final port = server.port;
+  await server.close();
+  return port;
+}
+
+String _generateToken(int length) {
+  final random = Random.secure();
+  final values = List<int>.generate(length, (i) => random.nextInt(256));
+  return base64Url.encode(values).substring(0, length);
 }
