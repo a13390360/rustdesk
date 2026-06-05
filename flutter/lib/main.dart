@@ -606,9 +606,6 @@ Future<void> startExternalApiServer() async {
   // 使用正确的配置存储 API
   await bind.mainSetLocalOption(key: 'api_port', value: port.toString());
   await bind.mainSetLocalOption(key: 'api_token', value: token);
-final configFile = File('${await bind.mainGetAppDir()}/api_config.json');
-await configFile.writeAsString(jsonEncode({'port': port, 'token': token}));
-
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
   debugPrint('External API server listening on 127.0.0.1:$port, token=$token');
 
